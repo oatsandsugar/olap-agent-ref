@@ -45,12 +45,16 @@ Agents: pick the **first** type that safely fits all observed values.
 - Example: `Decimal(9,2)` → up to `±99,999,999.99`
 
 ### 📅 Dates & ⏱ Times
-| Type | Range / Precision |
-|------|-------------------|
-| `Date` | 1970-01-01 – 2149-06-06 |
-| `Date32` | ±~5,000 years |
-| `DateTime` | seconds precision |
-| `DateTime64(3|6|9)` | milliseconds / microseconds / nanoseconds (use only if observed) |
+
+| Type             | Range / Precision                                      |
+|------------------|--------------------------------------------------------|
+| `Date`           | 1970-01-01 – 2149-06-06                                |
+| `Date32`         | ±~5,000 years                                          |
+| `DateTime`       | seconds precision                                      |
+| `DateTime64(3)`  | milliseconds precision                                 |
+| `DateTime64(6)`  | microseconds precision                                 |
+| `DateTime64(9)`  | nanoseconds precision                                  |
+
 
 ### ⚙️ Boolean
 - `Bool` (alias of `UInt8`)
