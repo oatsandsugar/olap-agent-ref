@@ -102,3 +102,39 @@ SELECT
   uniqExact(col) AS distinct_exact,
   round(distinct_exact / n_rows, 6) AS distinct_ratio
 FROM tbl;
+
+---
+
+## 4️⃣ Cardinality-Driven Type Strategy
+
+> ⚡ Use cardinality thresholds to select storage strategy.
+> The right choice minimizes memory and lookup overhead while preserving performance.
+
+| Cardinality Range | Recommended Type / Encoding | Notes |
+|-------------------|-----------------------------|-------|
+| ≤ 10              | `Enum8`                     | Perfect for small static sets |
+| 10–10 000         | `LowCardinality(String)`    | Best trade-off |
+| 10 000–100 000     | `LowCardinality` *(watch memory)* | Benchmark, may bloat dictionary |
+| > 100 000          | Base `String` / numeric     | Avoid dictionary overhead |
+
+### 🔍 Guidelines
+
+- **Static sets** (e.g. `status`, `day_of_week`) → prefer `Enum8`
+- **Small evolving sets** (e.g. `country`, `region`) → use `LowCardinality(String)`
+- **Large IDs / high churn** (e.g. `user_id`) → plain numeric or string
+- Monitor with detection queries (§3️⃣) to catch drift across thresholds.
+
+---
+
+### 🧠 Rationale
+
+- Dictionary encodings (`LowCardinality`) store distinct values + surrogate keys.
+- When distinct set grows large, memory and indirection cost outweigh benefit.
+- These thresholds balance compression vs. dictionary overhead.
+
+---
+
+### ⚠️ Pitfalls
+- Frequent dictionary rebuilds = performance regression.
+- High `distinct_ratio` (> 0.2) + high `n_rows` = poor fit for LowCardinality.
+- Changing enum values requires schema updates — plan stability.
