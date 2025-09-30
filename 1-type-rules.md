@@ -1,97 +1,148 @@
-# 🧠 ClickHouse Schema Type Rules & Linter Guide
-> Based on [ClickHouse Docs – Selecting Data Types](https://clickhouse.com/docs/best-practices/select-data-types) and [LowCardinality Documentation](https://clickhouse.com/docs/en/sql-reference/data-types/lowcardinality).
+# OLAP Schema Type Rules & Linter Guide
 
----
+See also: [ClickHouse Docs – Selecting Data Types](https://clickhouse.com/docs/best-practices/select-data-types) and [LowCardinality Documentation](https://clickhouse.com/docs/en/sql-reference/data-types/lowcardinality).
 
-## 0️⃣ Core Rule: “Use the strictest type that preserves semantics and range”
+## 0. Core Rule: Use the strictest type that preserves semantics and range
 
-OLAP engines like ClickHouse scale with **bytes processed**, not row count.  
+OLAP engines like ClickHouse scale with **bytes processed**, not row count.
 Choosing the smallest viable type directly reduces:
-- **I/O** (less data read)
-- **CPU** (faster decompression/vectorization)
-- **Storage** (better compression)
 
-> ✅ **Goal:** smallest safe type for each column  
-> ⚠️ **Trade-off:** don’t truncate valid ranges; use detection queries below.
+* I/O (less data read)
+* CPU (faster decompression and vectorization)
+* Storage (better compression)
 
----
+**Goal:** smallest safe type for each column
+**Trade-off:** do not truncate valid ranges; use detection queries below
 
-## 1️⃣ Type Waterfalls (ClickHouse) — with Ranges
+## 1. Type Waterfalls (ClickHouse) — with Ranges
 
-Agents: pick the **first** type that safely fits all observed values.
+Agents should pick the **first** type that safely fits all observed values.
 
-### 🔢 Unsigned Integers (non-negative)
-| Type | Range | Notes |
-|------|--------|-------|
-| `UInt8`  | 0 – 255 | 1 byte |
-| `UInt16` | 0 – 65,535 | 2 bytes |
-| `UInt32` | 0 – 4,294,967,295 | 4 bytes |
+### 1.1 Unsigned Integers (non-negative)
+
+| Type     | Range                          | Notes   |
+| -------- | ------------------------------ | ------- |
+| `UInt8`  | 0 – 255                        | 1 byte  |
+| `UInt16` | 0 – 65,535                     | 2 bytes |
+| `UInt32` | 0 – 4,294,967,295              | 4 bytes |
 | `UInt64` | 0 – 18,446,744,073,709,551,615 | 8 bytes |
 
-### 🔢 Signed Integers
-| Type | Range |
-|------|--------|
-| `Int8`  | −128 – 127 |
-| `Int16` | −32,768 – 32,767 |
+### 1.2 Signed Integers
+
+| Type    | Range                          |
+| ------- | ------------------------------ |
+| `Int8`  | −128 – 127                     |
+| `Int16` | −32,768 – 32,767               |
 | `Int32` | −2,147,483,648 – 2,147,483,647 |
-| `Int64` | −9.22e18 – 9.22e18 |
+| `Int64` | −9.22e18 – 9.22e18             |
 
-### 🌊 Floating / Real
-- `Float32` → prefer unless measurable precision loss  
-- `Float64` → only if required for precision or very large magnitudes
+### 1.3 Floating / Real
 
-### 💰 Fixed-Scale (Decimal)
-- Use `Decimal(P,S)` where **P = total digits**, **S = scale**
-- Example: `Decimal(9,2)` → up to `±99,999,999.99`
+* Use `Float32` unless measurable precision loss
+* Use `Float64` only if required for precision or very large magnitudes
 
-### 📅 Dates & ⏱ Times
+### 1.4 Fixed-Scale (Decimal)
 
-| Type             | Range / Precision                                      |
-|------------------|--------------------------------------------------------|
-| `Date`           | 1970-01-01 – 2149-06-06                                |
-| `Date32`         | ±~5,000 years                                          |
-| `DateTime`       | seconds precision                                      |
-| `DateTime64(3)`  | milliseconds precision                                 |
-| `DateTime64(6)`  | microseconds precision                                 |
-| `DateTime64(9)`  | nanoseconds precision                                  |
+* Use `Decimal(P,S)` where **P = total digits**, **S = scale**
+* Example: `Decimal(9,2)` stores up to `±99,999,999.99`
 
+### 1.5 Dates and Times
 
-### ⚙️ Boolean
-- `Bool` (alias of `UInt8`)
+| Type            | Range / Precision       |
+| --------------- | ----------------------- |
+| `Date`          | 1970-01-01 – 2149-06-06 |
+| `Date32`        | ±~5,000 years           |
+| `DateTime`      | seconds precision       |
+| `DateTime64(3)` | milliseconds precision  |
+| `DateTime64(6)` | microseconds precision  |
+| `DateTime64(9)` | nanoseconds precision   |
 
-### 🏷 Categorical
-- `Enum8` → ≤127 unique values (stable set)
-- `Enum16` → ≤32,767 values (stable set)
-- `LowCardinality(String)` → for evolving low-distinct sets (preferred)
+### 1.6 Boolean
 
-### 🔠 Strings
-- `FixedString(n)` if all rows share exact length *n*  
-- `String` otherwise  
-- Wrap with `LowCardinality(...)` if **distinct_count < ~10 000** and **ratio ≤ 0.2**
+* `Bool` (alias of `UInt8`)
 
-### 🌐 JSON / Semi-Structured
-- Light use → `String` + `JSONExtract*()` on read  
-- Heavy querying → `Object('json')` + **materialized typed columns** for hot paths
+### 1.7 Categorical
+
+* `Enum8` → ≤127 unique values (stable set)
+* `Enum16` → ≤32,767 values (stable set)
+* `LowCardinality(String)` → for evolving low-distinct sets
+
+### 1.8 Strings
+
+* `FixedString(n)` if all rows share exact length *n*
+* `String` otherwise
+* Wrap with `LowCardinality(...)` if `distinct_count < 10 000` and `ratio ≤ 0.2`
+
+### 1.9 JSON / Semi-Structured
+
+* Light use → `String` + `JSONExtract*()` on read
+* Heavy querying → `Object('json')` + materialized typed columns for hot paths
+
+## 2. LowCardinality Rules (Dictionary Encoding)
+
+Use cardinality thresholds to select the correct encoding strategy.
+The right choice minimizes memory and lookup overhead while preserving performance.
+
+Columns with repeating values benefit from dictionary encoding, which stores a small dictionary of unique values and replaces each occurrence with a compact surrogate key.
+
+### 2.1 Heuristics
+
+| Cardinality Range | Recommended Type / Encoding     | Notes                                            |
+| ----------------- | ------------------------------- | ------------------------------------------------ |
+| ≤ 10              | `Enum8`                         | Ideal for small, static sets                     |
+| 10 – 10 000       | `LowCardinality(String)`        | Best trade-off for evolving categorical values   |
+| 10 000 – 100 000  | `LowCardinality` (watch memory) | Benchmark — dictionary growth may outweigh gains |
+| > 100 000         | Base `String` / numeric         | Avoid dictionary overhead; prefer raw types      |
+
+**Rule of Thumb:** Use `LowCardinality` only when `distinct_count < 10k` and `distinct_ratio ≤ 0.2`
+
+### 2.2 Rationale
+
+* Dictionary encodings compress repeated strings via surrogate IDs
+* They improve scan speed and compression but scale poorly with very high cardinality
+* Thresholds balance I/O reduction with memory overhead
+
+### 2.3 Guidelines
+
+* Static sets (e.g. `status`, `day_of_week`) → `Enum8`
+* Small evolving sets (e.g. `country`, `region`) → `LowCardinality(String)`
+* Large ID sets (e.g. `user_id`, `session_id`) → plain numeric or string
+* Use detection queries (§3) to monitor drift — columns can “age out” of LowCardinality fit
+
+### 2.4 Pitfalls
+
+* High `distinct_ratio` (> 0.2) with many rows → dictionary overhead dominates
+* Frequent value churn → costly rebuilds
+* Changing enum values requires schema migration
+* Watch for memory blow-ups when `LowCardinality` is applied to unbounded text
+
+### 2.5 Detection Query Reference
+
+```sql
+SELECT
+  uniqExact(col) AS distinct_exact,
+  count() AS n_rows,
+  round(distinct_exact / n_rows, 4) AS distinct_ratio
+FROM tbl;
+```
+
+### 2.6 Example Mappings
+
+| Column Example | Distinct Count | Recommended Type         |
+| -------------- | -------------- | ------------------------ |
+| `status`       | 4              | `Enum8`                  |
+| `country`      | 200            | `LowCardinality(String)` |
+| `state`        | 50             | `Enum8` or `Enum16`      |
+| `user_id`      | 50M            | Plain `UInt64`           |
 
 ---
 
-## 2️⃣ LowCardinality Rules (Dictionary Encoding)
-
-| Heuristic | Action |
-|------------|--------|
-| distinct < 10 000 **and** ratio ≤ 0.2 | ✅ Use `LowCardinality(String)` |
-| 10 000 – 100 000 | ⚖️ Benchmark first |
-| > 100 000 | 🚫 Use plain `String` |
-
-> Docs note: large dictionaries (>100 k) can increase memory + indirection cost. 
-
----
-
-## 3️⃣ Detection Queries (plug-and-play)
+## 3. Detection Queries (Plug-and-Play)
 
 Replace `tbl`, `col` with actual names.
 
 ### 3.1 Profile Column
+
 ```sql
 SELECT
   toTypeName(col) AS current_type,
@@ -102,39 +153,4 @@ SELECT
   uniqExact(col) AS distinct_exact,
   round(distinct_exact / n_rows, 6) AS distinct_ratio
 FROM tbl;
-
----
-
-## 4️⃣ Cardinality-Driven Type Strategy
-
-> ⚡ Use cardinality thresholds to select storage strategy.
-> The right choice minimizes memory and lookup overhead while preserving performance.
-
-| Cardinality Range | Recommended Type / Encoding | Notes |
-|-------------------|-----------------------------|-------|
-| ≤ 10              | `Enum8`                     | Perfect for small static sets |
-| 10–10 000         | `LowCardinality(String)`    | Best trade-off |
-| 10 000–100 000     | `LowCardinality` *(watch memory)* | Benchmark, may bloat dictionary |
-| > 100 000          | Base `String` / numeric     | Avoid dictionary overhead |
-
-### 🔍 Guidelines
-
-- **Static sets** (e.g. `status`, `day_of_week`) → prefer `Enum8`
-- **Small evolving sets** (e.g. `country`, `region`) → use `LowCardinality(String)`
-- **Large IDs / high churn** (e.g. `user_id`) → plain numeric or string
-- Monitor with detection queries (§3️⃣) to catch drift across thresholds.
-
----
-
-### 🧠 Rationale
-
-- Dictionary encodings (`LowCardinality`) store distinct values + surrogate keys.
-- When distinct set grows large, memory and indirection cost outweigh benefit.
-- These thresholds balance compression vs. dictionary overhead.
-
----
-
-### ⚠️ Pitfalls
-- Frequent dictionary rebuilds = performance regression.
-- High `distinct_ratio` (> 0.2) + high `n_rows` = poor fit for LowCardinality.
-- Changing enum values requires schema updates — plan stability.
+```
